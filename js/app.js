@@ -1,5 +1,6 @@
 /* ============================================
    Animatch - Main Application Logic
+   Now powered by Jikan API v4
    ============================================ */
 
 (function () {
@@ -12,6 +13,18 @@
     darkMode: localStorage.getItem("animatch_theme") !== "light",
     genresExplored: new Set(),
     recsUsed: 0,
+    allRecommendations: [],
+    topAnime: [],
+    topAnimePage: 1,
+    topAnimeHasNext: true,
+    topAnimeLoading: false,
+    searchPage: 1,
+    searchHasNext: false,
+    searchQuery: "",
+    searchLoading: false,
+    discoverPage: {},
+    discoverHasNext: {},
+    discoverLoading: {},
   };
 
   // ---- DOM Cache ----
@@ -74,7 +87,6 @@
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     let particles = [];
-    let animationId;
 
     function resize() {
       canvas.width = canvas.offsetWidth;
@@ -92,7 +104,7 @@
           speedX: (Math.random() - 0.5) * 0.5,
           speedY: (Math.random() - 0.5) * 0.5,
           opacity: Math.random() * 0.5 + 0.1,
-          hue: Math.random() * 60 + 260, // purple-pink range
+          hue: Math.random() * 60 + 260,
         });
       }
     }
@@ -104,17 +116,14 @@
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
         ctx.fillStyle = `hsla(${p.hue}, 80%, 70%, ${p.opacity})`;
         ctx.fill();
-
         p.x += p.speedX;
         p.y += p.speedY;
-
         if (p.x < 0) p.x = canvas.width;
         if (p.x > canvas.width) p.x = 0;
         if (p.y < 0) p.y = canvas.height;
         if (p.y > canvas.height) p.y = 0;
       });
 
-      // Draw connections
       for (let i = 0; i < particles.length; i++) {
         for (let j = i + 1; j < particles.length; j++) {
           const dx = particles[i].x - particles[j].x;
@@ -131,7 +140,7 @@
         }
       }
 
-      animationId = requestAnimationFrame(drawParticles);
+      requestAnimationFrame(drawParticles);
     }
 
     resize();
@@ -177,7 +186,7 @@
 
   // ---- Scroll Animations ----
   function initScrollAnimations() {
-    const elements = $$(".section-header, .step-card, .category-card, .trending-card, .community-card, .profile-card, .about-feature, .recs-card, .mylist-card-wrapper");
+    const elements = $$(".section-header, .step-card, .category-card, .trending-card, .community-card, .profile-card, .about-feature, .recs-card, .mylist-card-wrapper, .api-anime-card");
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -207,6 +216,83 @@
     });
   }
 
+  // ---- Spinner Helper ----
+  function createSpinner() {
+    return '<div class="loading-spinner"><div class="spinner-ring"></div><span>Loading anime...</span></div>';
+  }
+
+  function createSmallSpinner() {
+    return '<div class="loading-spinner small"><div class="spinner-ring"></div></div>';
+  }
+
+  // ---- Anime Card Renderer (API data) ----
+  function renderAnimeCard(anime, options = {}) {
+    const { showAdd = true, showReason = false, reason = "" } = options;
+    const isInList = state.myList.find((m) => m.mal_id === anime.mal_id);
+    const genreTags = anime.genres
+      .slice(0, 3)
+      .map((g) => `<span class="genre-tag" style="--tag-color: ${getGenreColor(g)}">${g}</span>`)
+      .join("");
+
+    const imageHtml = anime.image
+      ? `<div class="api-card-image"><img src="${anime.image}" alt="${anime.title}" loading="lazy" onerror="this.parentElement.classList.add('img-error')"/></div>`
+      : `<div class="api-card-image img-error"></div>`;
+
+    const ratingHtml = anime.rating
+      ? `<div class="api-card-rating"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><span>${anime.rating.toFixed(2)}</span></div>`
+      : "";
+
+    const reasonHtml = showReason && reason
+      ? `<div class="recs-card-reason"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>${reason}</span></div>`
+      : "";
+
+    const addBtnHtml = showAdd
+      ? `<button class="btn btn-sm btn-add-api ${isInList ? "added" : ""}" data-mal-id="${anime.mal_id}" data-title="${anime.title.replace(/"/g, "&quot;")}" data-genres='${JSON.stringify(anime.genres)}' data-image="${anime.image}" data-desc="${(anime.description || "").replace(/"/g, "&quot;").substring(0, 200)}" data-rating="${anime.rating}" data-episodes="${anime.episodes}">${isInList ? "In My List" : "+ Add to My List"}</button>`
+      : "";
+
+    const episodesText = anime.episodes !== "?" ? `${anime.episodes} eps` : "";
+    const metaHtml = (anime.type || episodesText)
+      ? `<div class="api-card-meta">${anime.type ? `<span>${anime.type}</span>` : ""}${episodesText ? `<span>${episodesText}</span>` : ""}</div>`
+      : "";
+
+    return `
+      <div class="api-anime-card">
+        ${imageHtml}
+        <div class="api-card-body">
+          <div class="api-card-header">
+            <h4 class="api-card-title">${anime.title}</h4>
+            ${ratingHtml}
+          </div>
+          ${metaHtml}
+          <p class="api-card-desc">${anime.description ? anime.description.substring(0, 150) + (anime.description.length > 150 ? "..." : "") : ""}</p>
+          <div class="api-card-genres">${genreTags}</div>
+          ${reasonHtml}
+          ${addBtnHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  function bindAddButtons(container) {
+    container.querySelectorAll(".btn-add-api:not(.added)").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const malId = parseInt(btn.dataset.malId);
+        const animeData = {
+          mal_id: malId,
+          title: btn.dataset.title,
+          genres: JSON.parse(btn.dataset.genres),
+          image: btn.dataset.image,
+          description: btn.dataset.desc,
+          rating: parseFloat(btn.dataset.rating) || 0,
+          episodes: btn.dataset.episodes,
+        };
+        addToMyList(animeData);
+        btn.textContent = "In My List";
+        btn.classList.add("added");
+      });
+    });
+  }
+
   // ---- Category Grid ----
   function renderCategories() {
     const grid = $("#categoryGrid");
@@ -217,7 +303,6 @@
         <div class="category-icon">${GENRE_ICONS[cat.icon]}</div>
         <h3>${cat.name}</h3>
         <p>${cat.description}</p>
-        <span class="category-count">${ANIME_DATABASE.filter((a) => a.genres.includes(cat.name)).length} titles</span>
       </div>
     `
     ).join("");
@@ -225,16 +310,81 @@
     $$(".category-card").forEach((card) => {
       card.addEventListener("click", () => {
         const genre = card.dataset.genre;
-        scrollToSection("recommendations");
-        setTimeout(() => {
-          const filterChip = $(`.filter-chip[data-filter="${genre.toLowerCase().replace(/ /g, "-")}"]`);
-          if (filterChip) filterChip.click();
-        }, 500);
+        scrollToSection("discover-results");
+        loadDiscoverGenre(genre);
       });
     });
   }
 
-  // ---- Anime Search ----
+  // ---- Discover: Load genre from API ----
+  async function loadDiscoverGenre(genre) {
+    const resultsSection = $("#discoverResults");
+    const resultsGrid = $("#discoverResultsGrid");
+    const resultsTitle = $("#discoverResultsTitle");
+    const loadMoreBtn = $("#discoverLoadMore");
+    if (!resultsSection || !resultsGrid) return;
+
+    resultsSection.style.display = "block";
+    resultsTitle.textContent = genre;
+
+    const genreId = JikanAPI.GENRE_MAP[genre];
+    if (!genreId) return;
+
+    state.discoverPage[genre] = 1;
+    state.discoverHasNext[genre] = true;
+    resultsGrid.innerHTML = createSpinner();
+
+    try {
+      const result = await JikanAPI.getAnimeByGenre(genreId, 1, 12);
+      state.discoverPage[genre] = 1;
+      state.discoverHasNext[genre] = result.pagination.has_next_page || false;
+      resultsGrid.innerHTML = result.anime.map((a) => renderAnimeCard(a)).join("");
+      bindAddButtons(resultsGrid);
+      loadMoreBtn.style.display = state.discoverHasNext[genre] ? "flex" : "none";
+      loadMoreBtn.dataset.genre = genre;
+      loadMoreBtn.dataset.genreId = genreId;
+      setTimeout(initScrollAnimations, 100);
+    } catch (err) {
+      resultsGrid.innerHTML = `<div class="api-error"><p>Failed to load anime. Please try again.</p><button class="btn btn-sm btn-retry" onclick="location.reload()">Retry</button></div>`;
+    }
+  }
+
+  function initDiscoverLoadMore() {
+    const loadMoreBtn = $("#discoverLoadMore");
+    if (!loadMoreBtn) return;
+
+    loadMoreBtn.addEventListener("click", async () => {
+      const genre = loadMoreBtn.dataset.genre;
+      const genreId = loadMoreBtn.dataset.genreId;
+      if (!genre || state.discoverLoading[genre]) return;
+
+      state.discoverLoading[genre] = true;
+      loadMoreBtn.classList.add("loading");
+      loadMoreBtn.querySelector(".btn-text").textContent = "Loading...";
+
+      try {
+        state.discoverPage[genre] = (state.discoverPage[genre] || 1) + 1;
+        const result = await JikanAPI.getAnimeByGenre(genreId, state.discoverPage[genre], 12);
+        state.discoverHasNext[genre] = result.pagination.has_next_page || false;
+
+        const grid = $("#discoverResultsGrid");
+        const newCards = result.anime.map((a) => renderAnimeCard(a)).join("");
+        grid.insertAdjacentHTML("beforeend", newCards);
+        bindAddButtons(grid);
+
+        loadMoreBtn.style.display = state.discoverHasNext[genre] ? "flex" : "none";
+        setTimeout(initScrollAnimations, 100);
+      } catch (err) {
+        state.discoverPage[genre]--;
+      }
+
+      state.discoverLoading[genre] = false;
+      loadMoreBtn.classList.remove("loading");
+      loadMoreBtn.querySelector(".btn-text").textContent = "Load More";
+    });
+  }
+
+  // ---- Anime Search (API-powered) ----
   function initSearch() {
     const input = $("#animeSearch");
     const results = $("#searchResults");
@@ -243,52 +393,73 @@
     let debounceTimer;
     input.addEventListener("input", () => {
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        const query = input.value.trim().toLowerCase();
+      debounceTimer = setTimeout(async () => {
+        const query = input.value.trim();
         if (query.length < 2) {
           results.innerHTML = "";
           results.classList.remove("active");
           return;
         }
-        const matches = ANIME_DATABASE.filter(
-          (a) =>
-            a.title.toLowerCase().includes(query) ||
-            a.genres.some((g) => g.toLowerCase().includes(query))
-        ).slice(0, 8);
 
-        if (matches.length === 0) {
-          results.innerHTML = '<div class="search-no-results">No anime found. Try a different search term.</div>';
-          results.classList.add("active");
-          return;
-        }
-
-        results.innerHTML = matches
-          .map(
-            (a) => `
-          <div class="search-result-item" data-id="${a.id}">
-            <div class="search-result-info">
-              <span class="search-result-title">${a.title}</span>
-              <span class="search-result-genres">${a.genres.join(" / ")}</span>
-            </div>
-            <button class="btn-add-anime ${state.myList.find((m) => m.id === a.id) ? "added" : ""}" data-id="${a.id}">
-              ${state.myList.find((m) => m.id === a.id) ? "Added" : "+ Add"}
-            </button>
-          </div>
-        `
-          )
-          .join("");
+        results.innerHTML = '<div class="search-loading">' + createSmallSpinner() + " Searching...</div>";
         results.classList.add("active");
 
-        $$(".btn-add-anime").forEach((btn) => {
-          btn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            const id = parseInt(btn.dataset.id);
-            addToMyList(id);
-            btn.textContent = "Added";
-            btn.classList.add("added");
+        try {
+          const result = await JikanAPI.searchAnime(query, 1, 8);
+          if (result.anime.length === 0) {
+            results.innerHTML = '<div class="search-no-results">No anime found. Try a different search term.</div>';
+            return;
+          }
+
+          results.innerHTML = result.anime
+            .map((a) => {
+              const isInList = state.myList.find((m) => m.mal_id === a.mal_id);
+              return `
+                <div class="search-result-item" data-mal-id="${a.mal_id}">
+                  <div class="search-result-image">
+                    ${a.image ? `<img src="${a.image}" alt="${a.title}" loading="lazy" />` : ""}
+                  </div>
+                  <div class="search-result-info">
+                    <span class="search-result-title">${a.title}</span>
+                    <span class="search-result-genres">${a.genres.slice(0, 3).join(" / ")}</span>
+                    ${a.rating ? `<span class="search-result-score">${a.rating.toFixed(2)}</span>` : ""}
+                  </div>
+                  <button class="btn-add-anime ${isInList ? "added" : ""}"
+                    data-mal-id="${a.mal_id}"
+                    data-title="${a.title.replace(/"/g, "&quot;")}"
+                    data-genres='${JSON.stringify(a.genres)}'
+                    data-image="${a.image}"
+                    data-desc="${(a.description || "").replace(/"/g, "&quot;").substring(0, 200)}"
+                    data-rating="${a.rating}"
+                    data-episodes="${a.episodes}">
+                    ${isInList ? "Added" : "+ Add"}
+                  </button>
+                </div>
+              `;
+            })
+            .join("");
+
+          results.querySelectorAll(".btn-add-anime:not(.added)").forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              const animeData = {
+                mal_id: parseInt(btn.dataset.malId),
+                title: btn.dataset.title,
+                genres: JSON.parse(btn.dataset.genres),
+                image: btn.dataset.image,
+                description: btn.dataset.desc,
+                rating: parseFloat(btn.dataset.rating) || 0,
+                episodes: btn.dataset.episodes,
+              };
+              addToMyList(animeData);
+              btn.textContent = "Added";
+              btn.classList.add("added");
+            });
           });
-        });
-      }, 200);
+        } catch (err) {
+          results.innerHTML = '<div class="search-no-results">Search failed. Please try again.</div>';
+        }
+      }, 350);
     });
 
     document.addEventListener("click", (e) => {
@@ -300,19 +471,28 @@
   }
 
   // ---- My List ----
-  function addToMyList(animeId) {
-    if (state.myList.find((m) => m.id === animeId)) return;
-    const anime = ANIME_DATABASE.find((a) => a.id === animeId);
-    if (!anime) return;
+  function addToMyList(animeData) {
+    if (state.myList.find((m) => m.mal_id === animeData.mal_id)) return;
 
-    const entry = { id: anime.id, title: anime.title, genres: anime.genres, rating: 0, favorite: false, addedAt: Date.now() };
+    const entry = {
+      mal_id: animeData.mal_id,
+      title: animeData.title,
+      genres: animeData.genres,
+      image: animeData.image || "",
+      description: animeData.description || "",
+      userRating: 0,
+      favorite: false,
+      addedAt: Date.now(),
+      apiRating: animeData.rating || 0,
+      episodes: animeData.episodes || "?",
+    };
     state.myList.push(entry);
     saveState();
     renderMyList();
     updateProfileStats();
     checkGamification();
 
-    anime.genres.forEach((g) => {
+    animeData.genres.forEach((g) => {
       if (!state.genresExplored.has(g)) {
         state.genresExplored.add(g);
         if (state.genresExplored.size > 1) {
@@ -322,18 +502,18 @@
     });
   }
 
-  function removeFromMyList(animeId) {
-    state.myList = state.myList.filter((m) => m.id !== animeId);
+  function removeFromMyList(malId) {
+    state.myList = state.myList.filter((m) => m.mal_id !== malId);
     saveState();
     renderMyList();
     generateRecommendations();
     updateProfileStats();
   }
 
-  function rateAnime(animeId, rating) {
-    const entry = state.myList.find((m) => m.id === animeId);
+  function rateAnime(malId, rating) {
+    const entry = state.myList.find((m) => m.mal_id === malId);
     if (entry) {
-      entry.rating = rating;
+      entry.userRating = rating;
       if (rating === 5 && !state.achievements.includes("first_five_star")) {
         showToast("first_five_star");
         state.achievements.push("first_five_star");
@@ -345,8 +525,8 @@
     }
   }
 
-  function toggleFavorite(animeId) {
-    const entry = state.myList.find((m) => m.id === animeId);
+  function toggleFavorite(malId) {
+    const entry = state.myList.find((m) => m.mal_id === malId);
     if (entry) {
       entry.favorite = !entry.favorite;
       saveState();
@@ -376,8 +556,8 @@
 
     const totalWatched = state.myList.length;
     const totalFavorites = state.myList.filter((m) => m.favorite).length;
-    const rated = state.myList.filter((m) => m.rating > 0);
-    const avgRating = rated.length > 0 ? (rated.reduce((s, m) => s + m.rating, 0) / rated.length).toFixed(1) : "0.0";
+    const rated = state.myList.filter((m) => m.userRating > 0);
+    const avgRating = rated.length > 0 ? (rated.reduce((s, m) => s + m.userRating, 0) / rated.length).toFixed(1) : "0.0";
 
     const tw = $("#totalWatched");
     const tf = $("#totalFavorites");
@@ -388,75 +568,77 @@
 
     grid.innerHTML = state.myList
       .map((entry) => {
-        const anime = ANIME_DATABASE.find((a) => a.id === entry.id);
         const stars = [1, 2, 3, 4, 5]
           .map(
-            (s) => `<button class="star-btn ${s <= entry.rating ? "filled" : ""}" data-id="${entry.id}" data-rating="${s}">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="${s <= entry.rating ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2">
+            (s) => `<button class="star-btn ${s <= entry.userRating ? "filled" : ""}" data-mal-id="${entry.mal_id}" data-rating="${s}">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="${s <= entry.userRating ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2">
               <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
             </svg>
           </button>`
           )
           .join("");
 
+        const imageHtml = entry.image
+          ? `<div class="mylist-card-image"><img src="${entry.image}" alt="${entry.title}" loading="lazy" /></div>`
+          : "";
+
         return `
         <div class="mylist-card-wrapper">
-          <div class="mylist-card" data-id="${entry.id}">
-            <div class="mylist-card-gradient" style="background: linear-gradient(135deg, ${getGenreColor(entry.genres[0])}22, ${getGenreColor(entry.genres[1] || entry.genres[0])}22)"></div>
-            <div class="mylist-card-header">
-              <h4>${entry.title}</h4>
-              <div class="mylist-card-actions">
-                <button class="btn-fav ${entry.favorite ? "active" : ""}" data-id="${entry.id}" aria-label="Toggle favorite">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="${entry.favorite ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2">
-                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-                  </svg>
-                </button>
-                <button class="btn-remove" data-id="${entry.id}" aria-label="Remove from list">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                  </svg>
-                </button>
+          <div class="mylist-card" data-mal-id="${entry.mal_id}">
+            ${imageHtml}
+            <div class="mylist-card-content">
+              <div class="mylist-card-header">
+                <h4>${entry.title}</h4>
+                <div class="mylist-card-actions">
+                  <button class="btn-fav ${entry.favorite ? "active" : ""}" data-mal-id="${entry.mal_id}" aria-label="Toggle favorite">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="${entry.favorite ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2">
+                      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                    </svg>
+                  </button>
+                  <button class="btn-remove" data-mal-id="${entry.mal_id}" aria-label="Remove from list">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="mylist-card-genres">
+                ${entry.genres.slice(0, 3).map((g) => `<span class="genre-tag" style="--tag-color: ${getGenreColor(g)}">${g}</span>`).join("")}
+                ${entry.favorite ? '<span class="genre-tag favorite-tag">Favorite</span>' : ""}
+              </div>
+              <div class="mylist-card-rating">
+                <span class="rating-label">Your rating:</span>
+                <div class="star-rating">${stars}</div>
               </div>
             </div>
-            <div class="mylist-card-genres">
-              ${entry.genres.map((g) => `<span class="genre-tag" style="--tag-color: ${getGenreColor(g)}">${g}</span>`).join("")}
-              ${entry.favorite ? '<span class="genre-tag favorite-tag">Favorite</span>' : ""}
-            </div>
-            <div class="mylist-card-rating">
-              <span class="rating-label">Your rating:</span>
-              <div class="star-rating">${stars}</div>
-            </div>
-            ${anime ? `<p class="mylist-card-desc">${anime.description}</p>` : ""}
           </div>
         </div>
       `;
       })
       .join("");
 
-    // Bind events
     $$(".star-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
-        rateAnime(parseInt(btn.dataset.id), parseInt(btn.dataset.rating));
+        rateAnime(parseInt(btn.dataset.malId), parseInt(btn.dataset.rating));
       });
     });
     $$(".btn-fav").forEach((btn) => {
-      btn.addEventListener("click", () => toggleFavorite(parseInt(btn.dataset.id)));
+      btn.addEventListener("click", () => toggleFavorite(parseInt(btn.dataset.malId)));
     });
     $$(".btn-remove").forEach((btn) => {
-      btn.addEventListener("click", () => removeFromMyList(parseInt(btn.dataset.id)));
+      btn.addEventListener("click", () => removeFromMyList(parseInt(btn.dataset.malId)));
     });
 
-    // Re-observe for scroll animations
     setTimeout(initScrollAnimations, 100);
   }
 
-  // ---- Recommendations Engine ----
-  function generateRecommendations() {
+  // ---- Recommendations Engine (API-powered) ----
+  async function generateRecommendations() {
     const grid = $("#recsGrid");
     const empty = $("#recsEmpty");
     if (!grid) return;
 
-    const ratedAnime = state.myList.filter((m) => m.rating > 0);
+    const ratedAnime = state.myList.filter((m) => m.userRating > 0);
     if (ratedAnime.length === 0) {
       grid.innerHTML = "";
       if (empty) {
@@ -467,21 +649,66 @@
     }
 
     if (empty) empty.style.display = "none";
+    grid.innerHTML = createSpinner();
 
-    // Build genre preference scores
     const genreScores = {};
     ratedAnime.forEach((entry) => {
       entry.genres.forEach((g) => {
         if (!genreScores[g]) genreScores[g] = { total: 0, count: 0 };
-        genreScores[g].total += entry.rating;
+        genreScores[g].total += entry.userRating;
         genreScores[g].count++;
       });
     });
 
-    // Score each unwatched anime
-    const watchedIds = new Set(state.myList.map((m) => m.id));
-    const scored = ANIME_DATABASE.filter((a) => !watchedIds.has(a.id))
-      .map((anime) => {
+    const topGenres = Object.entries(genreScores)
+      .sort((a, b) => (b[1].total / b[1].count) - (a[1].total / a[1].count))
+      .slice(0, 3)
+      .map(([genre]) => genre);
+
+    const watchedIds = new Set(state.myList.map((m) => m.mal_id));
+    let recommendations = [];
+
+    try {
+      const fetchPromises = topGenres.map((genre) => {
+        const genreId = JikanAPI.GENRE_MAP[genre];
+        return genreId ? JikanAPI.getAnimeByGenre(genreId, 1, 10) : Promise.resolve({ anime: [] });
+      });
+
+      const results = await Promise.all(fetchPromises);
+      const allAnime = results.flatMap((r) => r.anime);
+      const uniqueAnime = [];
+      const seenIds = new Set();
+
+      for (const anime of allAnime) {
+        if (!watchedIds.has(anime.mal_id) && !seenIds.has(anime.mal_id)) {
+          seenIds.add(anime.mal_id);
+          let score = 0;
+          const matchedGenres = [];
+          anime.genres.forEach((g) => {
+            if (genreScores[g]) {
+              score += (genreScores[g].total / genreScores[g].count) * 2;
+              matchedGenres.push(g);
+            }
+          });
+          score += (anime.rating || 0) * 0.5;
+
+          let reason = "A great pick based on your overall taste profile";
+          if (matchedGenres.length > 0) {
+            const topGenre = matchedGenres[0];
+            const reasons = RECOMMENDATION_REASONS[topGenre];
+            if (reasons) {
+              reason = reasons[Math.floor(Math.random() * reasons.length)];
+            }
+          }
+
+          uniqueAnime.push({ ...anime, score, reason, matchedGenres });
+        }
+      }
+
+      recommendations = uniqueAnime.sort((a, b) => b.score - a.score);
+    } catch (err) {
+      const fallbackAnime = ANIME_DATABASE.filter((a) => !watchedIds.has(a.id));
+      recommendations = fallbackAnime.map((anime) => {
         let score = 0;
         const matchedGenres = [];
         anime.genres.forEach((g) => {
@@ -491,23 +718,28 @@
           }
         });
         score += anime.rating * 0.5;
-
-        // Build reason
         let reason = "A great pick based on your overall taste profile";
         if (matchedGenres.length > 0) {
-          const topGenre = matchedGenres[0];
-          const reasons = RECOMMENDATION_REASONS[topGenre];
-          if (reasons) {
-            reason = reasons[Math.floor(Math.random() * reasons.length)];
-          }
+          const reasons = RECOMMENDATION_REASONS[matchedGenres[0]];
+          if (reasons) reason = reasons[Math.floor(Math.random() * reasons.length)];
         }
+        return {
+          mal_id: anime.id,
+          title: anime.title,
+          genres: anime.genres,
+          description: anime.description,
+          rating: anime.rating,
+          episodes: anime.episodes,
+          image: "",
+          score,
+          reason,
+          matchedGenres,
+        };
+      }).sort((a, b) => b.score - a.score);
+    }
 
-        return { ...anime, score, reason, matchedGenres };
-      })
-      .sort((a, b) => b.score - a.score);
-
-    state.allRecommendations = scored;
-    renderRecommendationCards(scored);
+    state.allRecommendations = recommendations;
+    renderRecommendationCards(recommendations);
 
     if (!state.achievements.includes("recommendations_unlocked")) {
       showToast("recommendations_unlocked");
@@ -531,48 +763,17 @@
         );
 
     if (sortBy === "rating") {
-      filtered = [...filtered].sort((a, b) => b.rating - a.rating);
+      filtered = [...filtered].sort((a, b) => (b.rating || 0) - (a.rating || 0));
     } else if (sortBy === "title") {
       filtered = [...filtered].sort((a, b) => a.title.localeCompare(b.title));
     }
 
-    grid.innerHTML = filtered.slice(0, 12)
-      .map(
-        (anime) => `
-      <div class="recs-card" data-genres='${JSON.stringify(anime.genres.map((g) => g.toLowerCase().replace(/ /g, "-")))}'>
-        <div class="recs-card-gradient" style="background: linear-gradient(135deg, ${getGenreColor(anime.genres[0])}33, ${getGenreColor(anime.genres[1] || anime.genres[0])}33)"></div>
-        <div class="recs-card-header">
-          <h4>${anime.title}</h4>
-          <div class="recs-card-rating">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            <span>${anime.rating}</span>
-          </div>
-        </div>
-        <p class="recs-card-desc">${anime.description}</p>
-        <div class="recs-card-genres">
-          ${anime.genres.map((g) => `<span class="genre-tag" style="--tag-color: ${getGenreColor(g)}">${g}</span>`).join("")}
-        </div>
-        <div class="recs-card-reason">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          <span>${anime.reason}</span>
-        </div>
-        <button class="btn btn-sm btn-add-from-rec" data-id="${anime.id}">+ Add to My List</button>
-      </div>
-    `
-      )
+    grid.innerHTML = filtered
+      .slice(0, 12)
+      .map((anime) => renderAnimeCard(anime, { showReason: true, reason: anime.reason }))
       .join("");
 
-    $$(".btn-add-from-rec").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        addToMyList(parseInt(btn.dataset.id));
-        btn.textContent = "Added!";
-        btn.disabled = true;
-        btn.classList.add("added");
-        state.recsUsed++;
-        updateProfileStats();
-      });
-    });
-
+    bindAddButtons(grid);
     setTimeout(initScrollAnimations, 100);
   }
 
@@ -597,42 +798,193 @@
     }
   }
 
-  // ---- Trending ----
-  function renderTrending() {
+  // ---- Trending (API-powered: Top Anime) ----
+  async function loadTrending() {
+    const grid = $("#trendingGrid");
+    const loadMoreBtn = $("#trendingLoadMore");
+    if (!grid) return;
+
+    if (state.topAnime.length === 0) {
+      grid.innerHTML = createSpinner();
+    }
+
+    try {
+      const result = await JikanAPI.getTopAnime(1, 12);
+      state.topAnime = result.anime;
+      state.topAnimePage = 1;
+      state.topAnimeHasNext = result.pagination.has_next_page || false;
+
+      grid.innerHTML = state.topAnime
+        .map((anime, i) => {
+          const badge = i < 3 ? "Hot" : i < 7 ? "Rising" : "New";
+          const trendScore = Math.max(60, 100 - i * 3);
+          return `
+            <div class="trending-card">
+              <div class="trending-rank">#${i + 1}</div>
+              ${anime.image ? `<div class="trending-card-image"><img src="${anime.image}" alt="${anime.title}" loading="lazy" /></div>` : ""}
+              <div class="trending-card-body">
+                <div class="trending-badge trending-${badge.toLowerCase()}">${badge}</div>
+                <div class="trending-score-bar">
+                  <div class="trending-score-fill" style="width: ${trendScore}%"></div>
+                </div>
+                <h4>${anime.title}</h4>
+                <p>${anime.description ? anime.description.substring(0, 120) + "..." : ""}</p>
+                <div class="trending-card-genres">
+                  ${anime.genres.slice(0, 3).map((g) => `<span class="genre-tag" style="--tag-color: ${getGenreColor(g)}">${g}</span>`).join("")}
+                </div>
+                <button class="btn btn-sm btn-add-api" data-mal-id="${anime.mal_id}" data-title="${anime.title.replace(/"/g, "&quot;")}" data-genres='${JSON.stringify(anime.genres)}' data-image="${anime.image}" data-desc="${(anime.description || "").replace(/"/g, "&quot;").substring(0, 200)}" data-rating="${anime.rating}" data-episodes="${anime.episodes}">+ Add to My List</button>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+
+      bindAddButtons(grid);
+      if (loadMoreBtn) {
+        loadMoreBtn.style.display = state.topAnimeHasNext ? "flex" : "none";
+      }
+      setTimeout(initScrollAnimations, 100);
+    } catch (err) {
+      renderTrendingFallback();
+    }
+  }
+
+  function renderTrendingFallback() {
     const grid = $("#trendingGrid");
     if (!grid) return;
 
     grid.innerHTML = TRENDING_ANIME.map(
       (anime) => `
       <div class="trending-card">
-        <div class="trending-card-gradient" style="background: linear-gradient(135deg, ${getGenreColor(anime.genres[0])}33, ${getGenreColor(anime.genres[1] || anime.genres[0])}33)"></div>
-        <div class="trending-badge trending-${anime.trend.toLowerCase()}">${anime.trend}</div>
-        <div class="trending-score-bar">
-          <div class="trending-score-fill" style="width: ${anime.trendScore}%"></div>
+        <div class="trending-card-body">
+          <div class="trending-badge trending-${anime.trend.toLowerCase()}">${anime.trend}</div>
+          <div class="trending-score-bar">
+            <div class="trending-score-fill" style="width: ${anime.trendScore}%"></div>
+          </div>
+          <h4>${anime.title}</h4>
+          <p>${anime.description}</p>
+          <div class="trending-card-genres">
+            ${anime.genres.map((g) => `<span class="genre-tag" style="--tag-color: ${getGenreColor(g)}">${g}</span>`).join("")}
+          </div>
         </div>
-        <h4>${anime.title}</h4>
-        <p>${anime.description}</p>
-        <div class="trending-card-genres">
-          ${anime.genres.map((g) => `<span class="genre-tag" style="--tag-color: ${getGenreColor(g)}">${g}</span>`).join("")}
-        </div>
-        <button class="btn btn-sm btn-add-trending" data-id="${anime.id}">+ Add to My List</button>
       </div>
     `
     ).join("");
+  }
 
-    $$(".btn-add-trending").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = parseInt(btn.dataset.id);
-        if (state.myList.find((m) => m.id === id)) {
-          btn.textContent = "Already Added";
-          return;
-        }
-        addToMyList(id);
-        btn.textContent = "Added!";
-        btn.disabled = true;
-        btn.classList.add("added");
-      });
+  function initTrendingLoadMore() {
+    const loadMoreBtn = $("#trendingLoadMore");
+    if (!loadMoreBtn) return;
+
+    loadMoreBtn.addEventListener("click", async () => {
+      if (state.topAnimeLoading || !state.topAnimeHasNext) return;
+      state.topAnimeLoading = true;
+      loadMoreBtn.classList.add("loading");
+      loadMoreBtn.querySelector(".btn-text").textContent = "Loading...";
+
+      try {
+        state.topAnimePage++;
+        const result = await JikanAPI.getTopAnime(state.topAnimePage, 12);
+        state.topAnimeHasNext = result.pagination.has_next_page || false;
+
+        const grid = $("#trendingGrid");
+        const startIndex = state.topAnime.length;
+        state.topAnime.push(...result.anime);
+
+        const newCards = result.anime
+          .map((anime, i) => {
+            const rank = startIndex + i + 1;
+            const badge = rank <= 3 ? "Hot" : rank <= 7 ? "Rising" : "New";
+            const trendScore = Math.max(60, 100 - rank * 2);
+            return `
+              <div class="trending-card">
+                <div class="trending-rank">#${rank}</div>
+                ${anime.image ? `<div class="trending-card-image"><img src="${anime.image}" alt="${anime.title}" loading="lazy" /></div>` : ""}
+                <div class="trending-card-body">
+                  <div class="trending-badge trending-${badge.toLowerCase()}">${badge}</div>
+                  <div class="trending-score-bar">
+                    <div class="trending-score-fill" style="width: ${trendScore}%"></div>
+                  </div>
+                  <h4>${anime.title}</h4>
+                  <p>${anime.description ? anime.description.substring(0, 120) + "..." : ""}</p>
+                  <div class="trending-card-genres">
+                    ${anime.genres.slice(0, 3).map((g) => `<span class="genre-tag" style="--tag-color: ${getGenreColor(g)}">${g}</span>`).join("")}
+                  </div>
+                  <button class="btn btn-sm btn-add-api" data-mal-id="${anime.mal_id}" data-title="${anime.title.replace(/"/g, "&quot;")}" data-genres='${JSON.stringify(anime.genres)}' data-image="${anime.image}" data-desc="${(anime.description || "").replace(/"/g, "&quot;").substring(0, 200)}" data-rating="${anime.rating}" data-episodes="${anime.episodes}">+ Add to My List</button>
+                </div>
+              </div>
+            `;
+          })
+          .join("");
+
+        grid.insertAdjacentHTML("beforeend", newCards);
+        bindAddButtons(grid);
+        loadMoreBtn.style.display = state.topAnimeHasNext ? "flex" : "none";
+        setTimeout(initScrollAnimations, 100);
+      } catch (err) {
+        state.topAnimePage--;
+      }
+
+      state.topAnimeLoading = false;
+      loadMoreBtn.classList.remove("loading");
+      loadMoreBtn.querySelector(".btn-text").textContent = "Load More";
     });
+  }
+
+  // ---- Random Anime ----
+  function initRandomButton() {
+    const btn = $("#randomAnimeBtn");
+    if (!btn) return;
+
+    btn.addEventListener("click", async () => {
+      const modal = $("#randomModal");
+      const content = $("#randomModalContent");
+      if (!modal || !content) return;
+
+      modal.classList.add("active");
+      content.innerHTML = createSpinner();
+
+      try {
+        const anime = await JikanAPI.getRandomAnime();
+        if (!anime) throw new Error("No data");
+
+        content.innerHTML = `
+          <div class="random-anime-card">
+            ${anime.image ? `<div class="random-card-image"><img src="${anime.image}" alt="${anime.title}" /></div>` : ""}
+            <div class="random-card-body">
+              <h3>${anime.title}</h3>
+              ${anime.rating ? `<div class="api-card-rating"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><span>${anime.rating.toFixed(2)}</span></div>` : ""}
+              <div class="api-card-meta"><span>${anime.type}</span>${anime.episodes !== "?" ? `<span>${anime.episodes} episodes</span>` : ""}<span>${anime.status}</span></div>
+              <p>${anime.description}</p>
+              <div class="api-card-genres">${anime.genres.slice(0, 4).map((g) => `<span class="genre-tag" style="--tag-color: ${getGenreColor(g)}">${g}</span>`).join("")}</div>
+              <div class="random-card-actions">
+                <button class="btn btn-primary btn-add-api" data-mal-id="${anime.mal_id}" data-title="${anime.title.replace(/"/g, "&quot;")}" data-genres='${JSON.stringify(anime.genres)}' data-image="${anime.image}" data-desc="${(anime.description || "").replace(/"/g, "&quot;").substring(0, 200)}" data-rating="${anime.rating}" data-episodes="${anime.episodes}">+ Add to My List</button>
+                <button class="btn btn-secondary" id="randomAgainBtn">Roll Again</button>
+              </div>
+            </div>
+          </div>
+        `;
+
+        bindAddButtons(content);
+        const againBtn = content.querySelector("#randomAgainBtn");
+        if (againBtn) {
+          againBtn.addEventListener("click", () => {
+            btn.click();
+          });
+        }
+      } catch (err) {
+        content.innerHTML = `<div class="api-error"><p>Failed to fetch random anime. Please try again.</p></div>`;
+      }
+    });
+
+    const modal = $("#randomModal");
+    if (modal) {
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal || e.target.closest(".modal-close")) {
+          modal.classList.remove("active");
+        }
+      });
+    }
   }
 
   // ---- Community Picks ----
@@ -672,8 +1024,8 @@
     const watched = state.myList.length;
     const genres = new Set();
     state.myList.forEach((m) => m.genres.forEach((g) => genres.add(g)));
-    const rated = state.myList.filter((m) => m.rating > 0);
-    const avgRating = rated.length > 0 ? (rated.reduce((s, m) => s + m.rating, 0) / rated.length).toFixed(1) : "0.0";
+    const rated = state.myList.filter((m) => m.userRating > 0);
+    const avgRating = rated.length > 0 ? (rated.reduce((s, m) => s + m.userRating, 0) / rated.length).toFixed(1) : "0.0";
 
     const pw = $("#profileWatched");
     const pg = $("#profileGenres");
@@ -684,7 +1036,6 @@
     if (pa) pa.textContent = avgRating;
     if (pr) pr.textContent = state.recsUsed;
 
-    // Level system
     const xp = watched * 20 + rated.length * 15 + state.recsUsed * 10;
     const level = Math.floor(xp / 100) + 1;
     const xpInLevel = xp % 100;
@@ -696,7 +1047,6 @@
     if (xf) xf.style.width = xpInLevel + "%";
     if (xc) xc.textContent = xpInLevel;
 
-    // Genre bars
     const genreBars = $("#genreBars");
     if (genreBars) {
       const genreCounts = {};
@@ -726,7 +1076,6 @@
       }
     }
 
-    // Accuracy ring
     const accuracy = Math.min(95, watched * 5 + rated.length * 8);
     const circle = $("#accuracyCircle");
     const accText = $("#accuracyText");
@@ -823,18 +1172,21 @@
     initSearch();
     renderMyList();
     initFilters();
-    renderTrending();
+    initDiscoverLoadMore();
+    initTrendingLoadMore();
+    initRandomButton();
     renderCommunity();
     updateProfileStats();
 
-    if (state.myList.some((m) => m.rating > 0)) {
+    // Load trending from API
+    loadTrending();
+
+    if (state.myList.some((m) => m.userRating > 0)) {
       generateRecommendations();
     }
 
-    // Rebuild genres explored set
     state.myList.forEach((m) => m.genres.forEach((g) => state.genresExplored.add(g)));
 
-    // Initial scroll animation setup
     setTimeout(initScrollAnimations, 300);
   }
 
