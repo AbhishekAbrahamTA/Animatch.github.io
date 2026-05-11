@@ -72,10 +72,14 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           Start Exploring
         </a>
+        <button class="btn btn-accent" id="randomAnimeBtn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 4 20 16 16 12 16 8"/></svg>
+          Random Anime
+        </button>
       </div>
       <div class="hero-stats">
         <div class="stat-item">
-          <span class="stat-number" data-count="500">0</span><span class="stat-plus">+</span>
+          <span class="stat-number" data-count="30000">0</span><span class="stat-plus">+</span>
           <span class="stat-label">Anime Titles</span>
         </div>
         <div class="stat-divider"></div>
@@ -157,6 +161,18 @@
       </div>
       <div class="category-grid" id="categoryGrid">
         <!-- Populated by JS -->
+      </div>
+      <!-- Discover Results -->
+      <div class="discover-results" id="discoverResults" style="display: none;">
+        <div id="discover-results"></div>
+        <div class="discover-results-header">
+          <h3>Browsing: <span class="gradient-text" id="discoverResultsTitle"></span></h3>
+        </div>
+        <div class="discover-results-grid" id="discoverResultsGrid"></div>
+        <button class="btn btn-load-more" id="discoverLoadMore" style="display: none;">
+          <span class="btn-text">Load More</span>
+          <div class="spinner-ring small"></div>
+        </button>
       </div>
     </div>
   </section>
@@ -250,6 +266,10 @@
       <div class="trending-grid" id="trendingGrid">
         <!-- Populated by JS -->
       </div>
+      <button class="btn btn-load-more" id="trendingLoadMore" style="display: none;">
+        <span class="btn-text">Load More</span>
+        <div class="spinner-ring small"></div>
+      </button>
     </div>
   </section>
 
@@ -435,11 +455,22 @@
     </div>
   </footer>
 
+  <!-- Random Anime Modal -->
+  <div class="modal-overlay" id="randomModal">
+    <div class="modal">
+      <button class="modal-close" aria-label="Close">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <div class="modal-body" id="randomModalContent"></div>
+    </div>
+  </div>
+
   <!-- Gamification Toast -->
   <div class="toast-container" id="toastContainer"></div>
 
   <!-- Scripts -->
   <script src="js/data.js"></script>
+  <script src="js/api.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
